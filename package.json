@@ -1,0 +1,18 @@
+{
+  "name": "code-lab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-paced, belt-style coding platform for a school computer lab (LAN only).",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev -w server\" \"npm:dev -w web\"",
+    "build": "npm run build -w web",
+    "start": "concurrently -n api,web -c blue,green \"npm:start -w server\" \"npm:start -w web\"",
+    "db:migrate": "npm run migrate -w server",
+    "db:seed": "npm run seed -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  }
+}

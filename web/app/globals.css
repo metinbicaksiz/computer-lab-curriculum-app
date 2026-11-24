@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+html,
+body {
+  height: 100%;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Blockly's toolbox labels are a bit small for younger students. */
+.blocklyTreeLabel,
+.blocklyToolboxCategoryLabel {
+  font-size: 15px !important;
+}

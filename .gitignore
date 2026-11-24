@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.env
+*.log
+web/public/monaco/
+web/public/pyodide/
+web/public/blockly-media/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+.claude
+.claude-flow
