@@ -1,9 +1,34 @@
-// Loads src/curriculum.ts into the database and creates the first teacher.
+// Loads src/curriculum.ts into the database, creates the superadmin and the demo class.
 // Safe to re-run: rows are upserted by slug, and lessons removed from the
 // curriculum file are deleted (along with progress on them).
 import bcrypt from "bcryptjs";
+import type pg from "pg";
+import { SCHOOL_DOMAIN } from "./accounts.ts";
 import { pool } from "./db.ts";
 import { belts, lessons, tracks } from "./curriculum.ts";
+
+/** A demo class with one teacher and one student. Only adds what is missing. */
+async function seedDemo(client: pg.PoolClient) {
+  const password = await bcrypt.hash("demo1234", 10);
+  const { rows: [cls] } = await client.query(
+    `INSERT INTO classes (name) VALUES ('Demo Class 6A')
+     ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`);
+  const { rows: [teacher] } = await client.query(
+    `INSERT INTO users (username, display_name, password_hash, role) VALUES ('demo.teacher', 'Demo Teacher', $1, 'teacher')
+     ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username RETURNING id, role`, [password]);
+  if (teacher.role === "teacher") {
+    await client.query("INSERT INTO class_teachers (class_id, teacher_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [cls.id, teacher.id]);
+  }
+  // Students log in with a school email. Earlier seeds used plain "demo.student"; rename it.
+  const studentLogin = `demo.student@${SCHOOL_DOMAIN}`;
+  await client.query(
+    `UPDATE users SET username = $1 WHERE username = 'demo.student' AND role = 'student'
+       AND NOT EXISTS (SELECT 1 FROM users WHERE username = $1)`, [studentLogin]);
+  await client.query(
+    `INSERT INTO users (username, display_name, password_hash, role, grade, class_id)
+     VALUES ($3, 'Demo Student', $1, 'student', 6, $2) ON CONFLICT (username) DO NOTHING`, [password, cls.id, studentLogin]);
+  console.log(`demo data ready: class "Demo Class 6A", demo.teacher / ${studentLogin} (password demo1234)`);
+}
 
 const client = await pool.connect();
 try {
@@ -54,16 +79,22 @@ try {
   const removed = await client.query("DELETE FROM lessons WHERE NOT (slug = ANY($1)) RETURNING slug", [lessons.map((l) => l.slug)]);
   if (removed.rowCount) console.log(`removed lessons: ${removed.rows.map((r) => r.slug).join(", ")}`);
 
-  const username = process.env.TEACHER_USERNAME || "teacher";
-  const existing = await client.query("SELECT 1 FROM users WHERE username = $1", [username]);
-  if (!existing.rowCount) {
-    const password = process.env.TEACHER_PASSWORD || "changeme";
+  // The one superadmin account: creates classes, teachers and students.
+  const hasAdmin = await client.query("SELECT 1 FROM users WHERE role = 'superadmin'");
+  if (!hasAdmin.rowCount) {
+    const username = (process.env.SUPERADMIN_USERNAME || "admin").toLowerCase();
+    const password = process.env.SUPERADMIN_PASSWORD || "changeme";
+    const taken = await client.query("SELECT 1 FROM users WHERE username = $1", [username]);
+    if (taken.rowCount) throw new Error(`can't create superadmin "${username}": that username is taken. Set SUPERADMIN_USERNAME in .env.`);
     await client.query(
-      "INSERT INTO users (username, display_name, password_hash, role) VALUES ($1, $2, $3, 'teacher')",
-      [username, "Teacher", await bcrypt.hash(password, 10)],
+      "INSERT INTO users (username, display_name, password_hash, role) VALUES ($1, 'Administrator', $2, 'superadmin')",
+      [username, await bcrypt.hash(password, 10)],
     );
-    console.log(`created teacher account "${username}" (change the password after logging in)`);
+    console.log(`created superadmin account "${username}" (change the password after logging in)`);
   }
+
+  // Demo data so the roles can be tried straight away. Turn off with SEED_DEMO=false.
+  if (process.env.SEED_DEMO !== "false") await seedDemo(client);
 
   await client.query("COMMIT");
   console.log(`seeded ${belts.length} belts, ${tracks.length} tracks, ${lessons.length} lessons`);

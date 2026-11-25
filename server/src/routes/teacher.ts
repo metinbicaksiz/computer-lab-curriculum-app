@@ -1,27 +1,42 @@
 import bcrypt from "bcryptjs";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { requireTeacher } from "../auth.ts";
-import { pool, query } from "../db.ts";
+import { requireStaff } from "../auth.ts";
+import { query } from "../db.ts";
 import { getPath } from "../progression.ts";
 
-const username = z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{2,32}$/, "letters, numbers, . _ - only");
-const newStudent = z.object({
-  username,
-  displayName: z.string().trim().min(1).max(60),
-  grade: z.number().int().min(1).max(12).nullable().optional(),
-  password: z.string().min(4),
-});
+/**
+ * SQL condition limiting `u` (a users row) to students this person may see:
+ * a teacher sees the students in their own classes, the superadmin sees every student.
+ * `param` is the placeholder number the user id goes into.
+ */
+function visibleStudents(req: FastifyRequest, param: number) {
+  if (req.user.role === "superadmin") return { sql: `u.role = 'student' AND $${param}::int IS NOT NULL`, id: req.user.id };
+  return {
+    sql: `u.role = 'student' AND u.class_id IN (SELECT class_id FROM class_teachers WHERE teacher_id = $${param})`,
+    id: req.user.id,
+  };
+}
 
 export default async function teacherRoutes(app: FastifyInstance) {
-  app.addHook("preHandler", requireTeacher);
+  app.addHook("preHandler", requireStaff);
 
-  // Class overview: one row per student with belt progress.
-  app.get("/api/teacher/students", async () => {
+  // Classes this person follows (all classes for the superadmin), for the class filter.
+  app.get("/api/teacher/classes", async (req) => query(
+    req.user.role === "superadmin"
+      ? "SELECT id, name FROM classes ORDER BY name"
+      : `SELECT c.id, c.name FROM classes c JOIN class_teachers ct ON ct.class_id = c.id
+          WHERE ct.teacher_id = $1 ORDER BY c.name`,
+    req.user.role === "superadmin" ? [] : [req.user.id]));
+
+  // Class overview: one row per visible student with belt progress.
+  app.get("/api/teacher/students", async (req) => {
+    const scope = visibleStudents(req, 1);
     const students = await query(
-      `SELECT u.id, u.username, u.display_name, u.grade, u.active,
+      `SELECT u.id, u.username, u.display_name, u.grade, u.active, u.class_id, c.name AS class_name,
               (SELECT max(updated_at) FROM progress p WHERE p.user_id = u.id) AS last_active
-         FROM users u WHERE role = 'student' ORDER BY u.grade NULLS LAST, u.display_name`);
+         FROM users u JOIN classes c ON c.id = u.class_id
+        WHERE ${scope.sql} ORDER BY c.name, u.grade NULLS LAST, u.display_name`, [scope.id]);
     // getPath is a few small queries; fine for a lab of ~30-60 students.
     return Promise.all(students.map(async (s) => {
       const path = await getPath(s.id);
@@ -39,57 +54,28 @@ export default async function teacherRoutes(app: FastifyInstance) {
     }));
   });
 
-  // Add one or many students (bulk import from a pasted list).
-  app.post("/api/teacher/students", async (req, reply) => {
-    const body = z.object({ students: z.array(newStudent).min(1).max(500) }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message ?? "Bad request." });
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      for (const s of body.data.students) {
-        await client.query(
-          "INSERT INTO users (username, display_name, grade, password_hash, role) VALUES ($1,$2,$3,$4,'student')",
-          [s.username, s.displayName, s.grade ?? null, await bcrypt.hash(s.password, 10)]);
-      }
-      await client.query("COMMIT");
-      return { created: body.data.students.length };
-    } catch (err: any) {
-      await client.query("ROLLBACK");
-      if (err.code === "23505") return reply.code(409).send({ error: `Username already taken: ${err.detail ?? ""}` });
-      throw err;
-    } finally {
-      client.release();
-    }
-  });
-
-  app.patch<{ Params: { id: string } }>("/api/teacher/students/:id", async (req, reply) => {
-    const body = z.object({
-      displayName: z.string().trim().min(1).max(60).optional(),
-      grade: z.number().int().min(1).max(12).nullable().optional(),
-      password: z.string().min(4).optional(),
-      active: z.boolean().optional(),
-    }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message ?? "Bad request." });
-    const d = body.data;
+  // Teachers can reset a password for a student in their class. Creating accounts,
+  // moving students between classes and turning accounts off are superadmin jobs (/api/admin).
+  app.post<{ Params: { id: string } }>("/api/teacher/students/:id/password", async (req, reply) => {
+    const body = z.object({ password: z.string().min(4) }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "Password must be at least 4 characters." });
+    const scope = visibleStudents(req, 3);
     const rows = await query(
-      `UPDATE users SET
-         display_name = COALESCE($2, display_name),
-         grade = CASE WHEN $3::boolean THEN $4::int ELSE grade END,
-         password_hash = COALESCE($5, password_hash),
-         active = COALESCE($6, active),
-         -- A password reset or turning the account off logs the student out everywhere.
-         sessions_valid_after = CASE WHEN $5 IS NOT NULL OR $6 = false THEN clock_timestamp() ELSE sessions_valid_after END
-       WHERE id = $1 AND role = 'student' RETURNING id`,
-      [req.params.id, d.displayName ?? null, d.grade !== undefined, d.grade ?? null,
-       d.password ? await bcrypt.hash(d.password, 10) : null, d.active ?? null]);
+      // A password reset logs the student out everywhere.
+      `UPDATE users u SET password_hash = $2, sessions_valid_after = clock_timestamp()
+        WHERE u.id = $1 AND ${scope.sql} RETURNING u.id`,
+      [req.params.id, await bcrypt.hash(body.data.password, 10), scope.id]);
     if (!rows.length) return reply.code(404).send({ error: "Student not found." });
     return { ok: true };
   });
 
   // Everything one student has done, including their code.
   app.get<{ Params: { id: string } }>("/api/teacher/students/:id", async (req, reply) => {
+    const scope = visibleStudents(req, 2);
     const [student] = await query(
-      "SELECT id, username, display_name, grade, active FROM users WHERE id = $1 AND role = 'student'", [req.params.id]);
+      `SELECT u.id, u.username, u.display_name, u.grade, u.active, u.class_id, c.name AS class_name
+         FROM users u JOIN classes c ON c.id = u.class_id
+        WHERE u.id = $1 AND ${scope.sql}`, [req.params.id, scope.id]);
     if (!student) return reply.code(404).send({ error: "Student not found." });
     const [path, work] = await Promise.all([
       getPath(student.id),
@@ -98,22 +84,31 @@ export default async function teacherRoutes(app: FastifyInstance) {
     return { student, path, work };
   });
 
-  // Capstones waiting for approval.
-  app.get("/api/teacher/reviews", async () => query(
-    `SELECT p.user_id, p.lesson_id, p.code, p.updated_at, u.display_name, u.username, l.title, l.slug, l.language
-       FROM progress p JOIN users u ON u.id = p.user_id JOIN lessons l ON l.id = p.lesson_id
-      WHERE p.status = 'submitted' ORDER BY p.updated_at`));
+  // Capstones waiting for approval, from visible students only.
+  app.get("/api/teacher/reviews", async (req) => {
+    const scope = visibleStudents(req, 1);
+    return query(
+      `SELECT p.user_id, p.lesson_id, p.code, p.updated_at, u.display_name, u.username, u.class_id, c.name AS class_name,
+              l.title, l.slug, l.language
+         FROM progress p JOIN users u ON u.id = p.user_id JOIN lessons l ON l.id = p.lesson_id
+         JOIN classes c ON c.id = u.class_id
+        WHERE p.status = 'submitted' AND ${scope.sql} ORDER BY p.updated_at`, [scope.id]);
+  });
 
   app.post<{ Params: { userId: string; lessonId: string } }>(
     "/api/teacher/reviews/:userId/:lessonId",
     async (req, reply) => {
       const body = z.object({ approve: z.boolean(), feedback: z.string().max(5000).optional() }).safeParse(req.body);
       if (!body.success) return reply.code(400).send({ error: "Bad request." });
+      const scope = visibleStudents(req, 5);
       const rows = await query(
         `UPDATE progress SET status = $3, feedback = $4, updated_at = now(),
                 completed_at = CASE WHEN $3 = 'completed' THEN now() ELSE completed_at END
-          WHERE user_id = $1 AND lesson_id = $2 AND status = 'submitted' RETURNING user_id`,
-        [req.params.userId, req.params.lessonId, body.data.approve ? "completed" : "started", body.data.feedback ?? null]);
+          WHERE user_id = $1 AND lesson_id = $2 AND status = 'submitted'
+            AND user_id IN (SELECT u.id FROM users u WHERE ${scope.sql})
+          RETURNING user_id`,
+        [req.params.userId, req.params.lessonId, body.data.approve ? "completed" : "started",
+         body.data.feedback ?? null, scope.id]);
       if (!rows.length) return reply.code(404).send({ error: "Nothing waiting for review." });
       return { ok: true };
     },

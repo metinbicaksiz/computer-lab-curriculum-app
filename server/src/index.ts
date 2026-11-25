@@ -2,6 +2,7 @@ import cookie from "@fastify/cookie";
 import jwt from "@fastify/jwt";
 import Fastify from "fastify";
 import { COOKIE } from "./auth.ts";
+import adminRoutes from "./routes/admin.ts";
 import authRoutes from "./routes/auth.ts";
 import lessonRoutes from "./routes/lessons.ts";
 import teacherRoutes from "./routes/teacher.ts";
@@ -27,6 +28,7 @@ app.get("/api/health", async () => ({ ok: true }));
 await app.register(authRoutes);
 await app.register(lessonRoutes);
 await app.register(teacherRoutes);
+await app.register(adminRoutes);
 
 // The API binds to localhost only. Students reach it through the Next.js
 // server, which proxies /api/* here, so there is a single port to open on the LAN.

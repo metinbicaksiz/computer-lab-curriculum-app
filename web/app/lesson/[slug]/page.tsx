@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/Markdown";
 import TopBar from "@/components/TopBar";
-import { api, type Lesson } from "@/lib/api";
+import { api, homeFor, type Lesson } from "@/lib/api";
 import { missingSelectors, runCode, warmUp, type OutputLine } from "@/lib/runners";
 import { useMe } from "@/lib/useMe";
 
@@ -113,7 +113,7 @@ export default function LessonPage() {
   );
   if (!lesson) return <><TopBar me={me} /><p className="p-8 text-slate-500">Loading…</p></>;
 
-  const back = me?.role === "teacher" ? "/teacher" : "/dashboard";
+  const back = me ? homeFor(me.role) : "/dashboard";
 
   return (
     <div className="flex h-full flex-col">

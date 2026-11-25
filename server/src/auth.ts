@@ -1,7 +1,8 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { query } from "./db.ts";
 
-export type SessionUser = { id: number; role: "student" | "teacher"; username: string };
+export type Role = "student" | "teacher" | "superadmin";
+export type SessionUser = { id: number; role: Role; username: string };
 
 // `t` = when the session started, in milliseconds. The standard JWT `iat` is
 // only whole seconds, too coarse: a logout or password reset in the same second
@@ -38,10 +39,17 @@ export async function requireUser(req: FastifyRequest, reply: FastifyReply) {
   req.user.username = row.username;
 }
 
-export async function requireTeacher(req: FastifyRequest, reply: FastifyReply) {
+/** Teachers and the superadmin: both can follow student progress. */
+export async function requireStaff(req: FastifyRequest, reply: FastifyReply) {
   await requireUser(req, reply);
   if (reply.sent) return;
-  if (req.user.role !== "teacher") return reply.code(403).send({ error: "Teachers only." });
+  if (req.user.role === "student") return reply.code(403).send({ error: "Teachers only." });
+}
+
+export async function requireSuperadmin(req: FastifyRequest, reply: FastifyReply) {
+  await requireUser(req, reply);
+  if (reply.sent) return;
+  if (req.user.role !== "superadmin") return reply.code(403).send({ error: "Superadmin only." });
 }
 
 /** Ends every existing session for a user (all computers). Returns the cutoff in ms. */

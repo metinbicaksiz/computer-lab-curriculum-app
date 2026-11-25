@@ -24,8 +24,13 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   return data as T;
 }
 
+export type Role = "student" | "teacher" | "superadmin";
+
+/** Where each role lands after logging in. */
+export const homeFor = (role: string) => role === "superadmin" ? "/admin" : role === "teacher" ? "/teacher" : "/dashboard";
+
 export type Me = {
-  id: number; username: string; display_name: string; role: "student" | "teacher";
+  id: number; username: string; display_name: string; role: Role;
   grade: number | null; earnedRank: number; xp: number;
 };
 
@@ -48,3 +53,7 @@ export type Lesson = {
   progress: { status: LessonStatus; code: string; attempts: number; feedback: string | null } | null;
   nextSlug: string | null;
 };
+
+/** The school email domain accounts use (e.g. "gobindsarvar.ca"). Fetched once per page load. */
+let configPromise: Promise<{ schoolDomain: string }> | null = null;
+export const getConfig = () => (configPromise ??= api<{ schoolDomain: string }>("/config"));

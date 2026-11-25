@@ -9,27 +9,34 @@ import { useMe } from "@/lib/useMe";
 
 type Student = {
   id: number; username: string; display_name: string; grade: number | null; active: boolean;
-  last_active: string | null; earnedRank: number; xp: number; waitingReview: boolean;
+  class_id: number; class_name: string; last_active: string | null; earnedRank: number; xp: number; waitingReview: boolean;
   belts: { slug: string; done: number; total: number }[];
 };
 type Review = {
   user_id: number; lesson_id: number; code: string; updated_at: string;
-  display_name: string; username: string; title: string; slug: string; language: string;
+  display_name: string; username: string; class_id: number; class_name: string; title: string; slug: string; language: string;
 };
 type BeltInfo = Path["belts"][number];
 
 export default function Teacher() {
-  const me = useMe("teacher");
-  const [tab, setTab] = useState<"class" | "add" | "reviews">("class");
+  const me = useMe("staff");
+  const [tab, setTab] = useState<"class" | "reviews">("class");
   const [students, setStudents] = useState<Student[] | null>(null); // null = still loading
   const [reviews, setReviews] = useState<Review[]>([]);
   const [belts, setBelts] = useState<BeltInfo[]>([]);
+  const [classes, setClasses] = useState<{ id: number; name: string }[]>([]);
+  const [classId, setClassId] = useState<number | "all">("all");
 
   const load = useCallback(() => {
     api<Student[]>("/teacher/students").then(setStudents).catch(() => {});
     api<Review[]>("/teacher/reviews").then(setReviews).catch(() => {});
+    api<{ id: number; name: string }[]>("/teacher/classes").then(setClasses).catch(() => {});
     api<Path>("/path").then((p) => setBelts(p.belts)).catch(() => {});
   }, []);
+  const inClass = <T extends { class_id: number }>(rows: T[]) =>
+    classId === "all" ? rows : rows.filter((r) => r.class_id === classId);
+  const shownStudents = students && inClass(students);
+  const shownReviews = inClass(reviews);
   useEffect(() => {
     if (!me) return;
     load();
@@ -46,12 +53,20 @@ export default function Teacher() {
 
   return (
     <>
-      <TopBar me={me}><span className="text-sm text-slate-500">Teacher</span></TopBar>
+      <TopBar me={me}>
+        {me?.role === "superadmin"
+          ? <Link href="/admin" className="text-sm text-slate-500 hover:underline">← Admin</Link>
+          : <span className="text-sm text-slate-500">Teacher</span>}
+      </TopBar>
       <main className="mx-auto max-w-7xl space-y-5 p-6">
-        <div className="flex flex-wrap gap-2">
-          {tabBtn("class", `Class (${students?.length ?? "…"})`)}
-          {tabBtn("reviews", `Reviews (${reviews.length})`)}
-          {tabBtn("add", "Add students")}
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={classId} onChange={(e) => setClassId(e.target.value === "all" ? "all" : Number(e.target.value))}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium">
+            <option value="all">All my classes</option>
+            {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {tabBtn("class", `Students (${shownStudents?.length ?? "…"})`)}
+          {tabBtn("reviews", `Reviews (${shownReviews.length})`)}
           <div className="flex-1" />
           {belts[0]?.lessons[0] && (
             <Link href={`/lesson/${belts[0].lessons[0].slug}`} className="rounded-lg bg-white px-4 py-2 text-slate-700 hover:bg-slate-100">
@@ -59,21 +74,26 @@ export default function Teacher() {
             </Link>
           )}
         </div>
-        {tab === "class" && (students
-          ? <ClassTable students={students} belts={belts} />
+        {tab === "class" && (shownStudents
+          ? <ClassTable students={shownStudents} belts={belts} noClasses={!classes.length} />
           : <p className="p-6 text-slate-500">Loading…</p>)}
-        {tab === "reviews" && <Reviews reviews={reviews} onDone={load} />}
-        {tab === "add" && <AddStudents onDone={() => { load(); setTab("class"); }} />}
+        {tab === "reviews" && <Reviews reviews={shownReviews} onDone={load} />}
       </main>
     </>
   );
 }
 
-function ClassTable({ students, belts }: { students: Student[]; belts: BeltInfo[] }) {
+function ClassTable({ students, belts, noClasses }: { students: Student[]; belts: BeltInfo[]; noClasses: boolean }) {
   const [filter, setFilter] = useState("");
   const shown = students.filter((s) =>
-    `${s.display_name} ${s.username} ${s.grade ?? ""}`.toLowerCase().includes(filter.toLowerCase()));
-  if (!students.length) return <p className="rounded-xl bg-white p-6 text-slate-600">No students yet. Use <b>Add students</b> to create accounts.</p>;
+    `${s.display_name} ${s.username} ${s.grade ?? ""} ${s.class_name}`.toLowerCase().includes(filter.toLowerCase()));
+  if (!students.length) return (
+    <p className="rounded-xl bg-white p-6 text-slate-600">
+      {noClasses
+        ? "You aren't assigned to any class yet. Ask the administrator to add you to one."
+        : "No students in this class yet. The administrator creates student accounts."}
+    </p>
+  );
   return (
     <div className="space-y-3">
       <input placeholder="Search by name, username or grade…" value={filter} onChange={(e) => setFilter(e.target.value)}
@@ -83,6 +103,7 @@ function ClassTable({ students, belts }: { students: Student[]; belts: BeltInfo[
           <thead className="bg-slate-50 text-left text-slate-600">
             <tr>
               <th className="p-3">Student</th>
+              <th className="p-3">Class</th>
               <th className="p-3">Grade</th>
               <th className="p-3">Belt</th>
               <th className="p-3">XP</th>
@@ -100,6 +121,7 @@ function ClassTable({ students, belts }: { students: Student[]; belts: BeltInfo[
                     <span className="ml-2 text-slate-400">{s.username}</span>
                     {s.waitingReview && <span className="ml-2 rounded bg-amber-100 px-1.5 text-xs text-amber-800">review</span>}
                   </td>
+                  <td className="p-3">{s.class_name}</td>
                   <td className="p-3">{s.grade ?? "–"}</td>
                   <td className="p-3">{belt?.name ?? "–"}</td>
                   <td className="p-3">{s.xp}</td>
@@ -145,7 +167,7 @@ function Reviews({ reviews, onDone }: { reviews: Review[]; onDone: () => void })
             <button onClick={() => { setOpen(r); setFeedback(""); }}
               className={`w-full rounded-xl p-3 text-left shadow-sm ${open === r ? "bg-indigo-50 ring-2 ring-indigo-400" : "bg-white hover:bg-slate-50"}`}>
               <p className="font-medium">{r.display_name}</p>
-              <p className="text-sm text-slate-500">{r.title} · {new Date(r.updated_at).toLocaleString()}</p>
+              <p className="text-sm text-slate-500">{r.class_name} · {r.title} · {new Date(r.updated_at).toLocaleString()}</p>
             </button>
           </li>
         ))}
@@ -164,64 +186,6 @@ function Reviews({ reviews, onDone }: { reviews: Review[]; onDone: () => void })
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Bulk add: one student per line, "username, Display Name, grade, password".
-// Grade and password are optional; a missing password defaults to the shared one.
-function AddStudents({ onDone }: { onDone: () => void }) {
-  const [text, setText] = useState("");
-  const [defaultPassword, setDefaultPassword] = useState("");
-  const [error, setError] = useState("");
-
-  const parsed = text.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
-    const [username, displayName, grade, password] = line.split(",").map((x) => x.trim());
-    return {
-      username: (username ?? "").toLowerCase(),
-      displayName: displayName || username,
-      grade: grade ? Number(grade) : null,
-      password: password || defaultPassword,
-    };
-  });
-
-  const submit = async () => {
-    setError("");
-    if (parsed.some((s) => !s.password || s.password.length < 4)) {
-      setError("Every student needs a password of 4+ characters. Set a default password or add one per line.");
-      return;
-    }
-    try {
-      await api("/teacher/students", { body: { students: parsed } });
-      setText("");
-      onDone();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  return (
-    <div className="max-w-3xl space-y-4 rounded-xl bg-white p-6 shadow-sm">
-      <div>
-        <h2 className="text-lg font-bold">Add students</h2>
-        <p className="text-sm text-slate-600">
-          One student per line: <code className="rounded bg-slate-100 px-1">username, Display Name, grade, password</code>.
-          Grade and password are optional. You can paste straight from a spreadsheet saved as CSV.
-        </p>
-      </div>
-      <textarea value={text} onChange={(e) => setText(e.target.value)}
-        placeholder={"ayilmaz, Ayşe Yılmaz, 6\nbkaya, Berk Kaya, 7, rocket42"}
-        className="h-48 w-full rounded-lg border border-slate-300 p-3 font-mono text-sm" />
-      <label className="block">
-        <span className="text-sm font-medium">Default password for lines without one</span>
-        <input value={defaultPassword} onChange={(e) => setDefaultPassword(e.target.value)}
-          className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2" />
-      </label>
-      {error && <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{error}</p>}
-      <button onClick={submit} disabled={!parsed.length}
-        className="rounded-lg bg-indigo-600 px-5 py-2 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-        Create {parsed.length || ""} account{parsed.length === 1 ? "" : "s"}
-      </button>
     </div>
   );
 }

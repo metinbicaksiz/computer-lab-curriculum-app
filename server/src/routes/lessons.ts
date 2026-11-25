@@ -7,7 +7,7 @@ import { getPath, lessonStatus, outputMatches } from "../progression.ts";
 type QuizQ = { question: string; options: string[]; answer: number };
 type SlugReq = FastifyRequest<{ Params: { slug: string } }>;
 
-/** Loads a lesson and checks the student may open it. Teachers can open anything. */
+/** Loads a lesson and checks the student may open it. Teachers and the superadmin can open anything. */
 async function loadLesson(req: SlugReq, reply: FastifyReply) {
   const [lesson] = await query(
     `SELECT l.*, t.slug AS track_slug, t.name AS track_name,
@@ -18,7 +18,7 @@ async function loadLesson(req: SlugReq, reply: FastifyReply) {
     reply.code(404).send({ error: "Lesson not found." });
     return null;
   }
-  if (req.user.role !== "teacher") {
+  if (req.user.role === "student") {
     const status = await lessonStatus(req.user.id, lesson.slug);
     if (!status || status === "locked") {
       reply.code(403).send({ error: "Finish the earlier lessons to unlock this one." });

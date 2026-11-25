@@ -9,7 +9,7 @@ import { api, type LessonSummary, type Path } from "@/lib/api";
 import { useMe } from "@/lib/useMe";
 
 type Detail = {
-  student: { id: number; username: string; display_name: string; grade: number | null; active: boolean };
+  student: { id: number; username: string; display_name: string; grade: number | null; active: boolean; class_name: string };
   path: Path;
   work: { lesson_id: number; code: string; attempts: number; feedback: string | null; updated_at: string }[];
 };
@@ -20,7 +20,7 @@ const statusLabel: Record<string, string> = {
 
 export default function StudentDetail() {
   const { id } = useParams<{ id: string }>();
-  const me = useMe("teacher");
+  const me = useMe("staff");
   const [data, setData] = useState<Detail | null>(null);
   const [viewing, setViewing] = useState<LessonSummary | null>(null);
   const [msg, setMsg] = useState("");
@@ -30,9 +30,9 @@ export default function StudentDetail() {
   }, [id]);
   useEffect(() => { if (me) load(); }, [me, load]);
 
-  const update = async (body: object, done: string) => {
+  const run = async (call: () => Promise<unknown>, done: string) => {
     try {
-      await api(`/teacher/students/${id}`, { method: "PATCH", body });
+      await call();
       setMsg(done);
       load();
     } catch (e) {
@@ -41,8 +41,11 @@ export default function StudentDetail() {
   };
   const resetPassword = () => {
     const password = prompt("New password for this student (4+ characters):");
-    if (password) update({ password }, "Password reset.");
+    if (password) run(() => api(`/teacher/students/${id}/password`, { body: { password } }), "Password reset.");
   };
+  // Only the superadmin can turn accounts on and off.
+  const setActive = (active: boolean) =>
+    run(() => api(`/admin/users/${id}`, { method: "PATCH", body: { active } }), active ? "Account turned on." : "Account turned off.");
 
   if (!data) return <><TopBar me={me} /><p className="p-8 text-slate-500">{msg || "Loading…"}</p></>;
   const { student, path, work } = data;
@@ -59,15 +62,17 @@ export default function StudentDetail() {
           <div className="flex-1">
             <h1 className="text-2xl font-bold">{student.display_name}</h1>
             <p className="text-slate-600">
-              {student.username} · Grade {student.grade ?? "–"} · {earned?.name ?? "No belt yet"} · {path.xp} XP
+              {student.username} · {student.class_name} · Grade {student.grade ?? "–"} · {earned?.name ?? "No belt yet"} · {path.xp} XP
               {!student.active && <span className="ml-2 text-red-600">(account off)</span>}
             </p>
           </div>
           <button onClick={resetPassword} className="rounded-lg border border-slate-300 px-3 py-2 hover:bg-slate-50">Reset password</button>
-          <button onClick={() => update({ active: !student.active }, student.active ? "Account turned off." : "Account turned on.")}
-            className="rounded-lg border border-slate-300 px-3 py-2 hover:bg-slate-50">
-            {student.active ? "Turn account off" : "Turn account on"}
-          </button>
+          {me?.role === "superadmin" && (
+            <button onClick={() => setActive(!student.active)}
+              className="rounded-lg border border-slate-300 px-3 py-2 hover:bg-slate-50">
+              {student.active ? "Turn account off" : "Turn account on"}
+            </button>
+          )}
         </section>
         {msg && <p className="text-sm text-slate-600">{msg}</p>}
 

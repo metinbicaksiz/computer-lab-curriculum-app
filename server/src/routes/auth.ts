@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
+import { SCHOOL_DOMAIN } from "../accounts.ts";
 import { COOKIE, endSessions, requireUser, type SessionUser } from "../auth.ts";
 import { query } from "../db.ts";
 import { lockedFor, recordFailure, recordSuccess } from "../loginLimiter.ts";
@@ -18,9 +19,12 @@ export default async function authRoutes(app: FastifyInstance) {
     reply.setCookie(COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", maxAge: 12 * 3600 });
   };
 
+  // Public: lets the pages show which email domain accounts use.
+  app.get("/api/config", async () => ({ schoolDomain: SCHOOL_DOMAIN }));
+
   app.post("/api/auth/login", async (req, reply) => {
     const body = z.object({ username: z.string().trim().toLowerCase(), password: z.string() }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: "Enter a username and password." });
+    if (!body.success) return reply.code(400).send({ error: "Enter your school email and password." });
     const { username, password } = body.data;
 
     const wait = lockedFor(req.ip, username);
@@ -30,7 +34,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       recordFailure(req.ip, username);
       req.log.warn({ ip: req.ip, username }, "failed login");
-      return reply.code(401).send({ error: "Wrong username or password." });
+      return reply.code(401).send({ error: "Wrong email or password." });
     }
     recordSuccess(req.ip, username);
     if (!user.active) return reply.code(403).send({ error: "This account is turned off. Ask your teacher." });

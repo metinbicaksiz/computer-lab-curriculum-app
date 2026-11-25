@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { api, homeFor } from "@/lib/api";
+import { useSchoolDomain } from "@/lib/useSchoolDomain";
 
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const domain = useSchoolDomain();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -14,7 +16,7 @@ export default function Login() {
     setError("");
     try {
       const { role } = await api<{ role: string }>("/auth/login", { body: { username, password } });
-      location.href = role === "teacher" ? "/teacher" : "/dashboard";
+      location.href = homeFor(role);
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -30,9 +32,10 @@ export default function Login() {
           <p className="text-slate-500">Earn your belts, one lesson at a time.</p>
         </div>
         <label className="block">
-          <span className="text-sm font-medium text-slate-700">Username</span>
+          <span className="text-sm font-medium text-slate-700">School email</span>
           <input
-            autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)}
+            autoFocus autoComplete="username" inputMode="email" value={username} onChange={(e) => setUsername(e.target.value)}
+            placeholder={domain ? `name@${domain}` : ""}
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-lg focus:border-indigo-500 focus:outline-none"
           />
         </label>

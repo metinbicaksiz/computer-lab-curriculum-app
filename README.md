@@ -55,8 +55,10 @@ Needs **Node.js 22+** and **PostgreSQL 15+**.
    npm run db:migrate
    npm run db:seed
    ```
-   This creates the teacher account from `.env` (`teacher` / `changeme` by default). Change
-   that password on the **My account** page after logging in.
+   This creates the one superadmin account from `.env` (`admin` / `changeme` by default) and a
+   demo class (`Demo Class 6A`) with `demo.teacher` and `demo.student@gobindsarvar.ca` (password `demo1234`).
+   Change the admin password on the **My account** page after logging in. Set `SEED_DEMO=false`
+   to skip the demo accounts.
 4. **Run:**
    - Day to day: `npm run build` once, then `npm start`
    - While editing the code: `npm run dev`
@@ -67,13 +69,37 @@ Needs **Node.js 22+** and **PostgreSQL 15+**.
    ```
    The API (4000) and database (5432) listen only on localhost and stay closed to the network.
 
-## Teacher workflow
+## Roles
 
-- **Add students:** Teacher → *Add students*. Paste one per line:
-  `username, Display Name, grade, password` (grade and password optional, with a shared
-  default password).
-- **Class view:** every student's belt, XP, progress per belt and last activity. Refreshes every 30s.
-- **Student page:** see the code for each lesson, reset a password, turn an account off.
+| Role | Can do |
+|---|---|
+| **Superadmin** (one only) | Create classes, teachers and students; assign teachers to classes and students to a class; reset passwords; turn accounts on/off; see every student's progress |
+| **Teacher** | See progress, code and capstone reviews of students **in their own classes only**; reset those students' passwords |
+| **Student** | Their own belts and lessons |
+
+Every student belongs to exactly one class, and every class has at least one teacher.
+
+**Logins:** students log in with their school email, which must end in `@gobindsarvar.ca`
+(set by `SCHOOL_EMAIL_DOMAIN` in `.env`). Teachers and the superadmin may use a school email or a
+plain username. Any email address must be on the school domain. The admin can change a login with
+*Change login* on the Users tab.
+
+## Superadmin workflow (`/admin`)
+
+- **Classes:** create a class and tick its teachers; edit to rename or change teachers. Deleting a
+  class with students asks whether to move them to another class or delete them with it.
+- **Add users:** pick *Students* (and their class) or *Teachers*, then paste one per line:
+  students `school email, Display Name, grade, password`, teachers `school email or username, Display Name, password`
+  (password optional, with a shared default).
+- **Users:** move a student to another class, reset a password, turn an account off, or
+  delete it. Deleting a student removes their progress and code; *Turn off* keeps them.
+  A teacher who is the only teacher of a class can't be deleted until the class has another.
+- **Student progress:** the teacher view, showing all classes.
+
+## Teacher workflow (`/teacher`)
+
+- **Class view:** filter by class; every student's belt, XP, progress per belt and last activity. Refreshes every 30s.
+- **Student page:** see the code for each lesson, reset a password.
 - **Reviews:** approve capstones or send them back with feedback.
 - **Preview lessons:** teachers can open any lesson, locked or not.
 
